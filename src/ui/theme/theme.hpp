@@ -1,5 +1,5 @@
 #pragma once
 
-namespace Theme {
+namespace PasswordGuard::UI::Theme {
     void Apply();
 }

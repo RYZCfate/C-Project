@@ -4,6 +4,8 @@
 #include <string_view>
 #include <sodium.h>
 
+namespace PasswordGuard::Core {
+
 // 安全内存分配器：利用 libsodium 确保内存被锁定且释放时自动擦除
 template <typename T>
 struct SodiumAllocator {
@@ -23,6 +25,16 @@ struct SodiumAllocator {
     }
 };
 
+template <typename T, typename U>
+inline bool operator==(const SodiumAllocator<T>&, const SodiumAllocator<U>&) noexcept {
+    return true;
+}
+
+template <typename T, typename U>
+inline bool operator!=(const SodiumAllocator<T>&, const SodiumAllocator<U>&) noexcept {
+    return false;
+}
+
 // 类型别名：使用安全分配器的字符串
 using SecureString = std::basic_string<char, std::char_traits<char>, SodiumAllocator<char>>;
 using SecureVector = std::vector<unsigned char, SodiumAllocator<unsigned char>>;
@@ -38,7 +50,7 @@ enum class DecryptError {
 // 解密结果结构体
 struct DecryptResult {
     DecryptError error;
-    std::string plain;
+    SecureString plain;
 };
 
 // ==========================================
@@ -52,10 +64,14 @@ bool init_crypto_env();
 bool init_master_key(SecureString& pwd, const std::vector<unsigned char>& salt);
 
 // 使用主密钥进行认证加密
-std::string encrypt(const std::string& plain);
+SecureString encrypt(const SecureString& plain);
 
 // 解析密文并验证完整性，失败时给出明确的错误类型
 DecryptResult decrypt(const std::string& cipher);
 
 // [新增 API] 安全清除内存中的主密钥和盐值（用于锁定保险库）
 void clear_master_key();
+
+bool is_vault_initialized();
+
+} // namespace PasswordGuard::Core

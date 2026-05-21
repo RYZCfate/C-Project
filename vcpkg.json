@@ -1,0 +1,16 @@
+{
+  "name": "passwordguard",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "libsodium",
+    {
+      "name": "hello-imgui",
+      "features": ["glfw-binding", "opengl3-binding"]
+    },
+    "imgui",
+    "opencv4",
+    "openssl",
+    "nu-book-zxing-cpp",
+    "nlohmann-json"
+  ]
+}

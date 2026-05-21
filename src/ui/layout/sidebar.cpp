@@ -1,46 +1,47 @@
 #include "sidebar.hpp"
-#include "imgui.h"
+#include "ui/theme/tokens.hpp"
+#include <imgui.h>
 
-#include "../../core/crypto.hpp"
-#include "../../app/app_state.hpp"
+namespace PasswordGuard::UI::Layout {
 
-void RenderSidebar() {
-    ImGui::BeginChild("Sidebar", ImVec2(180, 0), true, ImGuiWindowFlags_NoScrollbar);
-    
+void RenderSidebar(App::AppContext& ctx, App::VaultService& vault) {
+    ImGui::BeginChild("Sidebar", ImVec2(Tokens::SidebarWidth, 0), true);
+
     ImGui::Spacing();
-    ImGui::TextDisabled("NAVIGATOR");
+    ImGui::Text("PasswordGuard");
     ImGui::Separator();
     ImGui::Spacing();
+    ImGui::Spacing();
 
-    auto render_nav_item = [](const char* label, AppState target) {
-        bool is_selected = (g_state.currentState == target);
-        if (is_selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ButtonActive]);
-        
-        if (ImGui::Button(label, ImVec2(-FLT_MIN, 40))) {
-            g_state.currentState = target;
+    // 导航
+    if (ImGui::Selectable("Dashboard", ctx.currentPage == App::PageId::Dashboard)) {
+        if (ctx.currentPage == App::PageId::AddEntry) {
+            ctx.ui.addEntry.wipeSensitive();
         }
-        
-        if (is_selected) ImGui::PopStyleColor();
-    };
+        ctx.currentPage = App::PageId::Dashboard;
+    }
 
-    render_nav_item("Vault", AppState::Dashboard);
-    render_nav_item("Add New", AppState::AddEntry);
+    if (ImGui::Selectable("Add Credential", ctx.currentPage == App::PageId::AddEntry && !ctx.session.isEditMode)) {
+        if (ctx.currentPage == App::PageId::AddEntry) {
+            ctx.ui.addEntry.wipeSensitive();
+        }
+        ctx.currentPage = App::PageId::AddEntry;
+        ctx.session.isEditMode = false;
+        ctx.session.selectedSiteId = std::nullopt;
+    }
     
-    // Fill space
-    float footer_height = 60.0f;
-    ImGui::Dummy(ImVec2(0, ImGui::GetContentRegionAvail().y - footer_height));
+    // 占据剩余高度，将 Lock 按钮推到底部
+    ImGui::Dummy(ImVec2(0, ImGui::GetContentRegionAvail().y - 40));
     
     ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
-    if (ImGui::Button("Lock Vault", ImVec2(-FLT_MIN, 35))) {
-        clear_master_key();
-        g_state.entries.clear();
-        g_state.currentState = AppState::Login;
+    ImGui::PushStyleColor(ImGuiCol_Text, Tokens::Danger);
+    if (ImGui::Selectable("Lock Vault")) {
+        vault.lock();
+        ctx.reset();
     }
-    ImGui::PopStyleColor(2);
-    
+    ImGui::PopStyleColor();
+
     ImGui::EndChild();
 }
+
+} // namespace PasswordGuard::UI::Layout

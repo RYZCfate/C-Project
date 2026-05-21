@@ -1,10 +1,10 @@
-#include "crypto.hpp"
-#include "storage.hpp"
-#include "password_input.hpp"
-#include "security.hpp"
+#include "core/crypto/crypto.hpp"
+#include "core/storage/storage.hpp"
+#include "core/password_input.hpp"
+#include "core/security.hpp"
 #include <iostream>
 #include <exception>
-#include <sodium.h>
+#include <string_view>
 
 // Forward declaration of the GUI entry point defined in gui.cpp
 int run_passwordguard_gui();
@@ -15,6 +15,8 @@ namespace
     {
         try
         {
+            using namespace PasswordGuard::Core;
+            
             // 1. 初始化 libsodium 加密环境
             if (!init_crypto_env())
             {
@@ -26,13 +28,11 @@ namespace
             SecureString masterPassword = prompt_for_password("Master Password: ");
 
             // 由于安全策略被我们拆分独立了，这里判断一下（主密码需要校验弱口令提醒）
-            std::string plain_pwd(masterPassword.data(), masterPassword.length());
+            std::string_view plain_pwd(masterPassword.data(), masterPassword.length());
             if (!is_strong_password(plain_pwd))
             {
                 std::cout << "[警告] 密码较弱！建议使用至少8个字符，包含字母和数字。\n";
             }
-            // 清理刚刚转换出来的临时普通字符串内存
-            sodium_memzero(plain_pwd.data(), plain_pwd.size());
 
             // 3. 提取现存的 Salt，或者触发生成全新 Salt
             auto salt = extract_salt_from_db();

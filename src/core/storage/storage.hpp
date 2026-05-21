@@ -2,18 +2,20 @@
 #include <string>
 #include <vector>
 #include <nlohmann/json.hpp>
-#include "crypto.hpp"
+#include "crypto/crypto.hpp"
+
+namespace PasswordGuard::Core {
 
 // 密码凭据数据结构：一个站点对应一条记录
 struct Credential {
     std::string site;
     std::string username;
     SecureString password;
-    SecureString totp_secret = "";
-
-    // 注意：nlohmann::json 对自定义分配器的 basic_string 支持良好
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Credential, site, username, password, totp_secret)
+    SecureString totp_secret;
 };
+
+void to_json(nlohmann::json& j, const Credential& p);
+void from_json(const nlohmann::json& j, Credential& p);
 
 // 从文件中提前提取 Salt（供初始化密钥时使用）
 std::vector<unsigned char> extract_salt_from_db();
@@ -26,3 +28,5 @@ bool save_entries(const std::vector<Credential>& entries);
 Credential* find_entry(std::vector<Credential>& entries, const std::string& site);
 // 删除指定站点条目，返回是否删除成功
 bool delete_entry(std::vector<Credential>& entries, const std::string& site);
+
+} // namespace PasswordGuard::Core

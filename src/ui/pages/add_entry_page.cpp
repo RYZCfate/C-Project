@@ -1,138 +1,128 @@
 #include "add_entry_page.hpp"
-#include "imgui.h"
-#include "../../app/app_state.hpp"
-#include "../../core/storage.hpp"
-#include "../../core/2fa.hpp"
-#include "../../core/security.hpp"
-#include <cstring>
+#include "ui/layout/sidebar.hpp"
+#include "ui/components/password_field.hpp"
+#include "ui/theme/tokens.hpp"
+#include "core/totp/totp.hpp"
+#include <imgui.h>
+#include <string>
 
-void RenderAddEntryPage() {
-    ImGui::Begin("Add Credential", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    
-    static char site[128] = "";
-    static char user[128] = "";
-    static char pass[128] = "";
-    static char totp[128] = "";
-    static std::string error_msg = "";
-    static std::string verify_code = "";
+namespace PasswordGuard::UI::Pages {
 
-    ImGui::TextDisabled("IDENTIFICATION");
-    ImGui::InputTextWithHint("Site Name", "e.g. GitHub", site, 128);
-    ImGui::InputTextWithHint("Username", "e.g. user@example.com", user, 128);
-    
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    
-    ImGui::TextDisabled("SECURITY");
-    
-    // Password with strength indicator
-    ImGui::InputText("Password", pass, 128, ImGuiInputTextFlags_Password);
-    if (pass[0] != '\0') {
-        bool strong = is_strong_password(pass);
-        float strength = strong ? 1.0f : 0.4f;
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, strong ? ImVec4(0.3f, 0.8f, 0.3f, 1.0f) : ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
-        ImGui::ProgressBar(strength, ImVec2(-FLT_MIN, 5), "");
-        ImGui::PopStyleColor();
-        ImGui::TextColored(strong ? ImVec4(0.3f, 0.8f, 0.3f, 1.0f) : ImVec4(0.8f, 0.3f, 0.3f, 1.0f), 
-                           strong ? "Strong Password" : "Weak Password (min 8 chars, mix letters/digits)");
-    }
+void RenderAddEntryPage(App::AppContext& ctx, App::VaultService& vault) {
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(vp->Size);
 
-    ImGui::Spacing();
+    ImGui::Begin("MainWindow", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
+
+    Layout::RenderSidebar(ctx, vault);
+
+    ImGui::SameLine();
+    ImGui::BeginChild("Content", ImVec2(0, 0), ImGuiChildFlags_None);
+
+    auto& state = ctx.ui.addEntry;
+    bool isEdit = ctx.session.isEditMode;
+
+    ImGui::Text(isEdit ? "Edit Credential" : "Add New Credential");
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::TextDisabled("TWO-FACTOR AUTH (OPTIONAL)");
-    ImGui::InputText("TOTP Secret", totp, 128);
+    // 如果是编辑模式且是初次进入该页面（即 siteBuf 为空），需要加载数据
+    if (isEdit && state.siteBuf[0] == '\0' && ctx.session.selectedSiteId) {
+        auto* entry = vault.findBySite(*ctx.session.selectedSiteId);
+        if (entry) {
+            strncpy(state.siteBuf, entry->site.c_str(), sizeof(state.siteBuf) - 1);
+            strncpy(state.userBuf, entry->username.c_str(), sizeof(state.userBuf) - 1);
+            strncpy(state.passBuf, entry->password.c_str(), sizeof(state.passBuf) - 1);
+            strncpy(state.totpBuf, entry->totp_secret.c_str(), sizeof(state.totpBuf) - 1);
+        }
+    }
+
+    ImGui::SetNextItemWidth(400);
+    if (isEdit) {
+        ImGui::InputText("Site Name", state.siteBuf, sizeof(state.siteBuf), ImGuiInputTextFlags_ReadOnly);
+    } else {
+        ImGui::InputText("Site Name", state.siteBuf, sizeof(state.siteBuf));
+    }
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(400);
+    ImGui::InputText("Username", state.userBuf, sizeof(state.userBuf));
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(400);
+    Components::RenderPasswordField("Password", state.passBuf, sizeof(state.passBuf), true);
+
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(400);
+    ImGui::InputTextWithHint("TOTP Secret (Base32)", "Optional", state.totpBuf, sizeof(state.totpBuf));
     
-    // Bridge to Core 2FA Scanning
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, 5));
-    if (ImGui::Button("Scan Screen")) {
-        try {
-            std::string secret = TwoFactorAuth::setup_from_screen_scan();
-            strncpy(totp, secret.c_str(), 127);
-            error_msg = "";
-            verify_code = "";
-        } catch (const std::exception& e) {
-            error_msg = e.what();
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Scan Camera")) {
-        try {
-            std::string secret = TwoFactorAuth::setup_from_camera_scan();
-            strncpy(totp, secret.c_str(), 127);
-            error_msg = "";
-            verify_code = "";
-        } catch (const std::exception& e) {
-            error_msg = e.what();
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Verify Secret")) {
-        if (totp[0] != '\0') {
+    // TOTP Verify button
+    if (state.totpBuf[0] != '\0') {
+        ImGui::SameLine();
+        if (ImGui::Button("Verify Secret")) {
             try {
-                verify_code = TwoFactorAuth::generate_totp(totp);
-                error_msg = "";
+                state.verifyCode = Core::TOTP::generate_totp(state.totpBuf);
+                state.errorMsg = "";
             } catch (const std::exception& e) {
-                error_msg = "Invalid Secret";
-                verify_code = "";
+                state.errorMsg = "Invalid TOTP Secret!";
+                state.verifyCode = "";
             }
         }
-    }
-    ImGui::PopStyleVar();
-
-    if (!verify_code.empty()) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "Generated Code: %s", verify_code.c_str());
-    }
-
-    if (!error_msg.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Error: %s", error_msg.c_str());
+        if (!state.verifyCode.empty()) {
+            ImGui::TextColored(Tokens::Success, "Current Code: %s", state.verifyCode.c_str());
+        }
     }
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    if (ImGui::Button("Save Credential", ImVec2(150, 40))) {
-        if (site[0] == '\0' || user[0] == '\0' || pass[0] == '\0') {
-            error_msg = "Site, Username, and Password are required.";
+    if (ImGui::Button("Save", ImVec2(100, Tokens::ButtonHeightMedium))) {
+        if (strlen(state.siteBuf) == 0) {
+            state.errorMsg = "Site Name cannot be empty.";
+        } else if (strlen(state.passBuf) == 0) {
+            state.errorMsg = "Password cannot be empty.";
         } else {
-            Credential new_entry;
-            new_entry.site = site;
-            new_entry.username = user;
-            new_entry.password = pass;
-            new_entry.totp_secret = totp;
+            Core::Credential new_entry{
+                std::string(state.siteBuf),
+                std::string(state.userBuf),
+                Core::SecureString(state.passBuf),
+                Core::SecureString(state.totpBuf)
+            };
             
-            g_state.entries.push_back(new_entry);
-            if (save_entries(g_state.entries)) {
-                g_state.currentState = AppState::Dashboard;
-                // Clear all
-                site[0] = user[0] = '\0';
-                sodium_memzero(pass, sizeof(pass)); pass[0] = '\0';
-                sodium_memzero(totp, sizeof(totp)); totp[0] = '\0';
-                error_msg = "";
-                verify_code = "";
+            bool success = false;
+            if (isEdit) {
+                success = vault.updateCredential(new_entry.site, std::move(new_entry));
             } else {
-                ImGui::OpenPopup("Save Error");
+                success = vault.addCredential(std::move(new_entry));
+                if (!success) {
+                    state.errorMsg = "Site already exists.";
+                }
+            }
+            
+            if (success) {
+                state.clear();
+                ctx.currentPage = App::PageId::Dashboard;
+            } else if (state.errorMsg.empty()) {
+                state.errorMsg = "Failed to save credential.";
             }
         }
     }
     
-    if (ImGui::BeginPopupModal("Save Error", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Failed to save to disk.");
-        if (ImGui::Button("OK", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
-        ImGui::EndPopup();
-    }
-    
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(100, 40))) {
-        g_state.currentState = AppState::Dashboard;
-        site[0] = user[0] = '\0';
-        sodium_memzero(pass, sizeof(pass)); pass[0] = '\0';
-        sodium_memzero(totp, sizeof(totp)); totp[0] = '\0';
-        error_msg = "";
-        verify_code = "";
+    if (ImGui::Button("Cancel", ImVec2(100, Tokens::ButtonHeightMedium))) {
+        state.clear();
+        ctx.currentPage = App::PageId::Dashboard;
     }
+
+    if (!state.errorMsg.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(Tokens::Danger, "%s", state.errorMsg.c_str());
+    }
+
+    ImGui::EndChild();
     ImGui::End();
 }
+
+} // namespace PasswordGuard::UI::Pages

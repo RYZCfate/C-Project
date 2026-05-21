@@ -1,9 +1,15 @@
 #include "theme.hpp"
-#include "imgui.h"
+#include "tokens.hpp"
+#include <imgui.h>
 
-namespace Theme {
+namespace PasswordGuard::UI::Theme {
     void Apply() {
         ImGui::StyleColorsDark();
-        // Add any custom styling here if needed
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.FrameRounding = 4.0f;
+        style.WindowRounding = 6.0f;
+        style.PopupRounding = 4.0f;
+        style.ScrollbarRounding = 4.0f;
+        style.TabRounding = 4.0f;
     }
 }

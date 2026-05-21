@@ -9,6 +9,8 @@
 #include <unistd.h>
 #endif
 
+namespace PasswordGuard::Core {
+
 // 跨平台读取密码：Windows 使用 _getch，Linux/macOS 关闭终端回显
 SecureString prompt_for_password(const std::string& prompt_msg) {
     SecureString pwd;
@@ -56,3 +58,5 @@ SecureString prompt_for_password(const std::string& prompt_msg) {
 
     return pwd;
 }
+
+} // namespace PasswordGuard::Core

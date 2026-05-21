@@ -1,62 +1,85 @@
 #include "login_page.hpp"
-#include "imgui.h"
-#include "../../app/app_state.hpp"
-#include "../../core/crypto.hpp"
-#include "../../core/storage.hpp"
-#include "../../core/password_input.hpp"
+#include "ui/components/password_field.hpp"
+#include "ui/theme/tokens.hpp"
+#include <imgui.h>
+#include <sodium.h>
+#include "core/security.hpp"
 
-void RenderLoginPage() {
+namespace PasswordGuard::UI::Pages {
+
+void RenderLoginPage(App::AppContext& ctx, App::VaultService& vault) {
     static bool env_init = false;
     if (!env_init) {
-        init_crypto_env();
+        Core::init_crypto_env();
         env_init = true;
     }
 
-    ImGui::Begin("Unlock Vault", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+    bool isNew = vault.isNewVault();
+    const char* title = isNew ? "Create New Vault" : "Unlock Vault";
+
+    ImGui::Begin(title, nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     
-    // UI state for error messaging
-    static std::string error_message = "";
-    
-    // Use static for ImGui persistence across frames, but we MUST zero it after processing.
-    static char password_buf[128] = ""; 
-    bool trigger_unlock = false;
+    auto& state = ctx.ui.login;
+    bool trigger_submit = false;
 
-    ImGui::Text("Please enter your master password to decrypt the vault.");
-    ImGui::Spacing();
-
-    if (ImGui::InputText("Master Password", password_buf, IM_ARRAYSIZE(password_buf), 
-        ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue)) {
-        trigger_unlock = true;
-    }
-    
-    ImGui::Spacing();
-    if (ImGui::Button("Unlock", ImVec2(120, 0))) {
-        trigger_unlock = true;
-    }
-
-    if (!error_message.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", error_message.c_str());
-    }
-
-    if (trigger_unlock) {
-        SecureString masterPassword = password_buf;
-        auto salt = extract_salt_from_db();
+    if (isNew) {
+        ImGui::Text("Welcome! Create a master password for your new vault.");
+        ImGui::Spacing();
         
-        if (init_master_key(masterPassword, salt)) {
-            if (load_entries(g_state.entries)) {
-                g_state.currentState = AppState::Dashboard;
-                error_message = "";
+        Components::RenderPasswordField("Master Password", state.passwordBuf, sizeof(state.passwordBuf), true);
+        
+        if (ImGui::InputText("Confirm Password", state.confirmBuf, sizeof(state.confirmBuf), ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue)) {
+            trigger_submit = true;
+        }
+    } else {
+        ImGui::Text("Please enter your master password to decrypt the vault.");
+        ImGui::Spacing();
+        
+        if (ImGui::InputText("Master Password", state.passwordBuf, sizeof(state.passwordBuf), ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue)) {
+            trigger_submit = true;
+        }
+    }
+    
+    ImGui::Spacing();
+    if (ImGui::Button(isNew ? "Create Vault" : "Unlock", ImVec2(120, Tokens::ButtonHeightMedium))) {
+        trigger_submit = true;
+    }
+
+    if (!state.errorMessage.empty()) {
+        ImGui::TextColored(Tokens::Danger, "%s", state.errorMessage.c_str());
+    }
+
+    if (trigger_submit) {
+        if (isNew) {
+            std::string_view p1(state.passwordBuf);
+            std::string_view p2(state.confirmBuf);
+            if (p1 != p2) {
+                state.errorMessage = "Passwords do not match.";
+            } else if (Core::get_password_strength(p1) == Core::PasswordStrength::Weak) {
+                state.errorMessage = "Password is too weak. (Min 8 chars, needs letters & numbers)";
             } else {
-                error_message = "Failed to decrypt vault. Wrong password?";
+                Core::SecureString masterPassword(state.passwordBuf);
+                if (vault.unlock(masterPassword)) {
+                    // Create new vault success
+                    vault.save(); // Save to disk immediately to persist salt
+                    ctx.currentPage = App::PageId::Dashboard;
+                    state.wipeSensitive();
+                } else {
+                    state.errorMessage = "Failed to initialize vault.";
+                }
             }
         } else {
-            error_message = "KDF Initialization failed.";
+            Core::SecureString masterPassword(state.passwordBuf);
+            if (vault.unlock(masterPassword)) {
+                ctx.currentPage = App::PageId::Dashboard;
+                state.wipeSensitive();
+            } else {
+                state.errorMessage = "Failed to decrypt vault. Wrong password?";
+            }
         }
-        
-        // CRITICAL: Always wipe the buffer after moving data to SecureString
-        sodium_memzero(password_buf, sizeof(password_buf));
-        password_buf[0] = '\0';
     }
 
     ImGui::End();
 }
+
+} // namespace PasswordGuard::UI::Pages

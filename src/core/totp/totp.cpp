@@ -1,4 +1,4 @@
-#include "2fa.hpp"
+#include "totp.hpp"
 #include <iostream>
 #include <chrono>
 #include <cmath>
@@ -16,7 +16,7 @@
 #include <windows.h>
 #endif
 
-namespace TwoFactorAuth {
+namespace PasswordGuard::Core::TOTP {
 
     // --- 内部辅助函数：Base32 解码 ---
     static std::vector<uint8_t> base32_decode(const std::string& base32_str) {

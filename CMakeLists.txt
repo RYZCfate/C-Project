@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
+
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "E:/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "E:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain location")
+endif()
+
+
+
 project(passwordguard CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -11,18 +18,27 @@ find_package(imgui CONFIG REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(ZXing REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # Gather source files
 set(SOURCES
-    src/core/2fa.cpp src/core/2fa.hpp
-    src/core/crypto.cpp src/core/crypto.hpp
     src/gui.cpp
-    src/core/password_input.cpp src/core/password_input.hpp
     src/main.cpp
+    src/core/crypto/crypto.cpp src/core/crypto/crypto.hpp
+    src/core/password_input.cpp src/core/password_input.hpp
     src/core/security.cpp src/core/security.hpp
-    src/core/storage.cpp src/core/storage.hpp
-    src/app/app_state.cpp src/app/app_state.hpp
+    src/core/storage/storage.cpp src/core/storage/storage.hpp
+    src/core/totp/totp.cpp src/core/totp/totp.hpp
+    src/app/app_context.cpp src/app/app_context.hpp
+    src/app/session/session_context.cpp src/app/session/session_context.hpp
+    src/app/services/vault_service.cpp src/app/services/vault_service.hpp
+    src/app/services/clipboard_service.cpp src/app/services/clipboard_service.hpp
+    src/ui/ui_state.hpp
+    src/ui/theme/tokens.hpp
     src/ui/theme/theme.cpp src/ui/theme/theme.hpp
+    src/ui/components/credential_card.cpp src/ui/components/credential_card.hpp
+    src/ui/components/search_bar.cpp src/ui/components/search_bar.hpp
+    src/ui/components/password_field.cpp src/ui/components/password_field.hpp
     src/ui/layout/sidebar.cpp src/ui/layout/sidebar.hpp
     src/ui/pages/login_page.cpp src/ui/pages/login_page.hpp
     src/ui/pages/dashboard_page.cpp src/ui/pages/dashboard_page.hpp
@@ -34,7 +50,13 @@ set(SOURCES
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE src src/core)
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    src 
+    src/core 
+    src/core/crypto 
+    src/core/storage 
+    src/core/totp
+)
 
 # Link dependencies
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -43,6 +65,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     imgui::imgui
     OpenSSL::Crypto
     ZXing::ZXing
+    nlohmann_json::nlohmann_json
     ${OpenCV_LIBS}
 )
 

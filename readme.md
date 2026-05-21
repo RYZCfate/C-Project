@@ -1,194 +1,55 @@
-# PasswordGuard API 与 ImGui 对接接口清单
+# PasswordGuard (oro)
 
-本文件基于当前所有 `*.cpp` 实现整理，目标是给你后续使用 **ImGui** 做 UI 交互时，直接作为调用参考。
+PasswordGuard 是一个基于 C++ 和 ImGui 构建的本地密码管理器，致力于提供安全、高效且跨平台的凭据管理体验。项目经过多次重构，目前采用了清晰的分层架构设计。
 
-## 1. 代码文件与职责
+## 1. 核心架构与目录说明
 
-| 文件                 | 主要职责                                    |
-| -------------------- | ------------------------------------------- |
-| `passwordguard.cpp`  | 程序入口，初始化加密环境与主密钥            |
-| `crypto.cpp`         | 主密钥派生、加解密、密钥清理                |
-| `storage.cpp`        | 凭据读写、JSON 序列化、站点查询与删除       |
-| `password_input.cpp` | 安全密码输入（CLI）                         |
-| `security.cpp`       | 密码强度检查                                |
-| `2fa.cpp`            | TOTP 生成/校验、二维码解析、屏幕/摄像头扫码 |
+项目源码位于 `src/` 目录下，主要分为以下几个层次：
 
-## 2. 项目可直接调用的接口（建议 UI 层优先使用）
+### 1.1 `src/core/` (核心业务逻辑层)
+负责底层的数据安全与加密计算，不依赖于任何 UI 框架。
+- **`crypto/`**: 基于 `libsodium` 的加解密模块。包含主密钥派生 (Argon2id)、XChaCha20-Poly1305 加密存储、内存安全清除等功能。
+- **`storage/`**: 数据持久化模块。负责将加密数据进行读写、JSON 序列化，以及数据防损机制（临时文件覆盖）。
+- **`totp/`**: 2FA/TOTP 模块。基于 `OpenSSL` 和 `ZXing` / `OpenCV`，支持手动输入密钥、屏幕截图扫码和摄像头扫码导入，以及实时验证码生成与校验。
+- **`security.cpp` & `password_input.cpp`**: 负责密码强度的检测与安全的输入处理。
 
-### 2.1 加密与主密钥（`crypto.hpp`）
+### 1.2 `src/app/` (应用服务层)
+负责协调核心逻辑与 UI 的交互，维护应用的生命周期和全局状态。
+- **`app_context` / `session_context`**: 维护当前登录会话的全局状态。
+- **`vault_service`**: 封装核心加密与存储 API，提供对上层友好的“密码库”管理服务（如加载、增删改查）。
+- **`clipboard_service`**: 提供跨平台的安全剪贴板操作，支持复制密码后自动清除。
 
-```cpp
-bool init_crypto_env();
-bool init_master_key(SecureString& pwd, const std::vector<unsigned char>& salt);
-std::string encrypt(const std::string& plain);
-DecryptResult decrypt(const std::string& cipher);
-void clear_master_key();
-```
+### 1.3 `src/ui/` (用户交互层)
+基于 `HelloImGui` 和 `ImGui` 构建的现代图形界面。
+- **`pages/`**: 具体的页面级视图，包含登录页 (`login_page`)、主控制台 (`dashboard_page`)、添加条目页 (`add_entry_page`) 和 两步验证页 (`totp_page`)。
+- **`components/`**: 可复用的 UI 组件，如凭据卡片 (`credential_card`)、搜索栏 (`search_bar`)、隐藏式密码输入框 (`password_field`)。
+- **`layout/`**: 全局布局组件，如侧边栏 (`sidebar`)。
+- **`theme/`**: 全局主题管理与设计令牌 (Tokens)，控制应用程序的视觉风格和配色。
 
-相关类型：
+### 1.4 入口文件
+- **`main.cpp`**: 程序的启动入口，负责应用初始化和环境检查。
+- **`gui.cpp`**: 负责初始化 ImGui 环境、字体加载和渲染主循环。
 
-```cpp
-using SecureString = std::string;
-using SecureVector = std::vector<unsigned char>;
+## 2. 外部依赖项
 
-enum class DecryptError {
-    None,
-    WrongPassword,
-    CorruptedFile,
-    VersionMismatch
-};
+本项目通过 `vcpkg` 和 `CMake` 管理依赖：
+- **[libsodium](https://doc.libsodium.org/)**: 用于所有底层的加密操作（Argon2id, XChaCha20-Poly1305）。
+- **[Hello ImGui](https://github.com/pthom/hello_imgui) & [Dear ImGui](https://github.com/ocornut/imgui)**: 用于快速构建现代化跨平台图形界面。
+- **[nlohmann/json](https://github.com/nlohmann/json)**: 用于凭据数据的内存结构序列化与反序列化。
+- **[OpenSSL](https://www.openssl.org/)**: 协助计算 HMAC-SHA1，用于 TOTP 代码生成。
+- **[ZXing-C++](https://github.com/zxing-cpp/zxing-cpp) & [OpenCV](https://opencv.org/)**: 用于 2FA 的二维码扫描（支持屏幕读取与摄像头捕捉）。
 
-struct DecryptResult {
-    DecryptError error;
-    std::string plain;
-};
-```
+## 3. 开发与构建
 
-### 2.2 数据存储与凭据管理（`storage.hpp`）
+项目采用 `CMake` 作为构建系统，且强依赖 C++ 20 标准。
+构建之前，请确保已正确安装上述依赖项的 `vcpkg` 版本，并通过 `CMAKE_TOOLCHAIN_FILE` 指定到你的 vcpkg 环境中。
 
-```cpp
-struct Credential {
-    std::string site;
-    std::string username;
-    std::string password;
-    std::string totp_secret;
-};
+主要构建环境示例：
+- **编译器**: 支持 MSVC 或 Clang
+- **标准**: C++ 20 
 
-std::vector<unsigned char> extract_salt_from_db();
-bool load_entries(std::vector<Credential>& entries);
-bool save_entries(const std::vector<Credential>& entries);
-Credential* find_entry(std::vector<Credential>& entries, const std::string& site);
-bool delete_entry(std::vector<Credential>& entries, const std::string& site);
-```
-
-### 2.3 输入与安全检查
-
-```cpp
-SecureString prompt_for_password(const std::string& prompt_msg); // password_input.hpp
-bool is_strong_password(const std::string& pwd);                  // security.hpp
-```
-
-### 2.4 二次验证 2FA（`2fa.hpp`）
-
-```cpp
-bool verify_totp(const std::string& secret_base32, const std::string& user_code);
-std::string generate_totp(const std::string& secret_base32);
-std::string setup_from_manual(const std::string& input_secret);
-std::string setup_from_screen_scan();
-std::string setup_from_camera_scan();
-std::string parse_otpauth_uri(const std::string& uri);
-```
-
-## 3. 从 `cpp` 中识别出的关键内部实现点（UI 设计时会用到）
-
-1. `crypto.cpp`
-   1. 文件格式：`MAGIC_HEADER("PWDG\\x01") + salt + nonce + ciphertext`
-   2. 加密算法：`XChaCha20-Poly1305`
-   3. KDF：`Argon2id (crypto_pwhash_ALG_ARGON2ID13)`
-   4. 主密钥与 salt 在进程内缓存，退出/锁库时应调用 `clear_master_key()`
-2. `storage.cpp`
-   1. 数据文件：`secrets.enc`
-   2. 采用临时文件 + rename 覆盖，降低写入损坏风险
-3. `2fa.cpp`
-   1. 手动、屏幕截图、摄像头三种 secret 导入方式
-   2. `setup_from_*` 与 `parse_otpauth_uri` 失败时会抛异常（UI 需捕获并提示）
-4. `passwordguard.cpp`
-   1. 当前主流程已经包含：初始化 libsodium -> 输入主密码 -> 强度检查 -> 提取 salt -> 初始化主密钥
-
-## 4. 外部库 API（ImGui 集成时可能直接或间接依赖）
-
-### 4.1 libsodium（`crypto.cpp`, `password_input.cpp`, `passwordguard.cpp`）
-
-```cpp
-sodium_init();
-randombytes_buf(...);
-crypto_pwhash(..., crypto_pwhash_ALG_ARGON2ID13);
-crypto_aead_xchacha20poly1305_ietf_encrypt(...);
-crypto_aead_xchacha20poly1305_ietf_decrypt(...);
-sodium_memzero(...);
-```
-
-### 4.2 OpenSSL（`2fa.cpp`）
-
-```cpp
-HMAC(EVP_sha1(), ...);
-```
-
-### 4.3 ZXing（`2fa.cpp`）
-
-```cpp
-ZXing::ImageView(...);
-ZXing::ReaderOptions options;
-options.setFormats(ZXing::BarcodeFormat::QRCode);
-ZXing::ReadBarcode(image, options);
-```
-
-### 4.4 OpenCV（`2fa.cpp`）
-
-```cpp
-cv::VideoCapture cap(0);
-cap.isOpened();
-cap >> frame;
-cv::cvtColor(...);
-cv::destroyAllWindows();
-```
-
-### 4.5 Win32 GDI（仅 Windows，`2fa.cpp`）
-
-```cpp
-GetSystemMetrics(...);
-GetDC(...);
-CreateCompatibleDC(...);
-CreateCompatibleBitmap(...);
-BitBlt(...);
-GetDIBits(...);
-DeleteDC(...);
-ReleaseDC(...);
-DeleteObject(...);
-```
-
-## 5. ImGui 层建议调用流程（可直接按这个流程接线）
-
-```cpp
-// App 启动
-init_crypto_env();
-
-// 登录窗口
-SecureString pwd = /* ImGui 输入框内容 */;
-auto salt = extract_salt_from_db();
-init_master_key(pwd, salt);
-
-// 主界面加载
-std::vector<Credential> entries;
-load_entries(entries);
-
-// 新增/编辑条目后
-save_entries(entries);
-
-// 查找/删除
-find_entry(entries, site);
-delete_entry(entries, site);
-
-// 2FA
-setup_from_manual(secret);
-setup_from_screen_scan();
-setup_from_camera_scan();
-verify_totp(secret, userCode);
-
-// 锁屏/退出
-clear_master_key();
-```
-
-## 6. 建议你在 ImGui 层封装的接口（便于后续维护）
-
-```cpp
-bool ui_login_with_master_password(const std::string& input_pwd);
-bool ui_load_vault(std::vector<Credential>& entries);
-bool ui_add_or_update_entry(std::vector<Credential>& entries, const Credential& c);
-bool ui_remove_entry(std::vector<Credential>& entries, const std::string& site);
-bool ui_bind_2fa_secret(Credential& c, const std::string& method); // manual/screen/camera
-bool ui_verify_2fa_code(const Credential& c, const std::string& code);
-void ui_lock_vault();
-```
-
-以上接口是 UI 层包装建议，底层调用仍对应本项目现有 API，不影响现有加密逻辑。
+## 4. UI 交互流程示例（对于二次开发）
+当前的 UI 已经被重构并拆分为不同的 Page。在进行 UI 层级的新特性开发时：
+1. 请勿直接在 UI 中调用 `core` 层的加密函数。
+2. 应优先调用 `src/app/` 层的 `VaultService` 和 `SessionContext`。
+3. 如果需新增页面，请在 `src/ui/pages/` 目录下新建类，并通过主窗口路由进行切换。

@@ -1,5 +1,5 @@
 #include "storage.hpp"
-#include "crypto.hpp"
+#include "crypto/crypto.hpp"
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
@@ -9,6 +9,8 @@
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
+
+namespace PasswordGuard::Core {
 
 // 加密文件的默认路径与文件头
 static const fs::path SECRETS_FILE = "secrets.enc";//加密文件路径
@@ -30,6 +32,30 @@ std::vector<unsigned char> extract_salt_from_db() {
     if (in.gcount() != static_cast<std::streamsize>(salt.size())) return {};
 
     return salt;
+}
+
+void to_json(nlohmann::json& j, const Credential& p) {
+    j = nlohmann::json{
+        {"site", p.site},
+        {"username", p.username},
+        {"password", std::string(p.password.data(), p.password.size())},
+        {"totp_secret", std::string(p.totp_secret.data(), p.totp_secret.size())}
+    };
+}
+
+void from_json(const nlohmann::json& j, Credential& p) {
+    j.at("site").get_to(p.site);
+    j.at("username").get_to(p.username);
+    
+    std::string pwd = j.at("password").get<std::string>();
+    p.password = SecureString(pwd.data(), pwd.size());
+    sodium_memzero(pwd.data(), pwd.size());
+    
+    if (j.contains("totp_secret")) {
+        std::string totp = j.at("totp_secret").get<std::string>();
+        p.totp_secret = SecureString(totp.data(), totp.size());
+        sodium_memzero(totp.data(), totp.size());
+    }
 }
 
 // 从磁盘读取密文 -> 解密 -> 解析 JSON -> 生成内存中的条目
@@ -75,7 +101,10 @@ bool load_entries(std::vector<Credential>& entries) {
 
     // 明文是 JSON，反序列化为结构体列表
     try {
-        auto j = json::parse(result.plain);
+        std::string plain_str(result.plain.data(), result.plain.size());
+        auto j = json::parse(plain_str);
+        sodium_memzero(plain_str.data(), plain_str.size());
+
         entries = j.get<std::vector<Credential>>();
         if (!result.plain.empty()) {
             sodium_memzero(result.plain.data(), result.plain.size());
@@ -97,11 +126,13 @@ bool load_entries(std::vector<Credential>& entries) {
 bool save_entries(const std::vector<Credential>& entries) {
     json j = entries;
     std::string plain = j.dump();
-    std::string cipher = encrypt(plain);
-    if (!plain.empty()) {
-        sodium_memzero(plain.data(), plain.size());
-    }
+    SecureString secure_plain(plain.data(), plain.size());
+    sodium_memzero(plain.data(), plain.size());
     plain.clear();
+
+    SecureString cipher = encrypt(secure_plain);
+    sodium_memzero(secure_plain.data(), secure_plain.size());
+    secure_plain.clear();
 
     if (cipher.empty()) return false;
 
@@ -214,3 +245,5 @@ bool delete_entry(std::vector<Credential>& entries, const std::string& site) {
     entries.erase(first, last);
     return true;
 }
+
+} // namespace PasswordGuard::Core

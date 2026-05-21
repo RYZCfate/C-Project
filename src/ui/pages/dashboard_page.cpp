@@ -1,14 +1,16 @@
 #include "dashboard_page.hpp"
-#include "../../app/app_state.hpp"
-#include "../../core/storage.hpp"
-#include "../layout/sidebar.hpp"
-#include "imgui.h"
-#include <string>
-#include <vector>
+#include "ui/layout/sidebar.hpp"
+#include "ui/components/search_bar.hpp"
+#include "ui/components/credential_card.hpp"
+#include "ui/theme/tokens.hpp"
+#include "app/services/clipboard_service.hpp"
+#include <imgui.h>
 #include <algorithm>
+#include <string>
 
-void RenderDashboardPage()
-{
+namespace PasswordGuard::UI::Pages {
+
+void RenderDashboardPage(App::AppContext& ctx, App::VaultService& vault) {
     ImGuiViewport *vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
     ImGui::SetNextWindowSize(vp->Size);
@@ -16,7 +18,7 @@ void RenderDashboardPage()
     ImGui::Begin("MainWindow", nullptr, 
         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
-    RenderSidebar();
+    Layout::RenderSidebar(ctx, vault);
 
     ImGui::SameLine();
 
@@ -26,110 +28,90 @@ void RenderDashboardPage()
     ImGui::Separator();
     ImGui::Spacing();
 
+    auto& state = ctx.ui.dashboard;
+
     // Search Bar
-    static char search_buf[128] = "";
-    ImGui::SetNextItemWidth(300);
-    ImGui::InputTextWithHint("##Search", "Search sites...", search_buf, IM_ARRAYSIZE(search_buf));
-    ImGui::SameLine();
-    if (ImGui::Button("Clear")) { search_buf[0] = '\0'; }
+    Components::RenderSearchBar(state.searchBuf, sizeof(state.searchBuf), Tokens::SearchBarWidth);
 
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 120);
-    if (ImGui::Button("Add Credential", ImVec2(120, 0)))
-    {
-        g_state.currentState = AppState::AddEntry;
+    if (ImGui::Button("Add Credential", ImVec2(120, Tokens::ButtonHeightSmall))) {
+        ctx.currentPage = App::PageId::AddEntry;
+        ctx.session.isEditMode = false;
+        ctx.session.selectedSiteId = std::nullopt;
     }
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    static std::string last_copied = "";
-    static float copy_feedback_timer = 0.0f;
-    if (copy_feedback_timer > 0) {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 0.3f, 1.0f), "Copied %s to clipboard!", last_copied.c_str());
-        copy_feedback_timer -= ImGui::GetIO().DeltaTime;
+    if (state.copyFeedbackTimer > 0) {
+        ImGui::TextColored(Tokens::Success, "Copied %s to clipboard!", state.lastCopiedLabel.c_str());
+        state.copyFeedbackTimer -= ImGui::GetIO().DeltaTime;
     } else {
         ImGui::Dummy(ImVec2(0, ImGui::GetTextLineHeight()));
     }
 
     ImGui::BeginChild("ScrollArea");
-    std::string filter = search_buf;
+    std::string filter = state.searchBuf;
     std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
 
-    for (size_t i = 0; i < g_state.entries.size(); ++i)
-    {
-        auto &entry = g_state.entries[i];
+    for (size_t i = 0; i < ctx.session.entries.size(); ++i) {
+        const auto& entry = ctx.session.entries[i];
         
-        // Filter logic
         std::string site_lower = entry.site;
         std::transform(site_lower.begin(), site_lower.end(), site_lower.begin(), ::tolower);
         if (!filter.empty() && site_lower.find(filter) == std::string::npos) continue;
 
-        ImGui::PushID(static_cast<int>(i));
-        ImGui::BeginChild("EntryCard", ImVec2(0, 80), true);
+        bool isRevealed = state.revealedSites.count(entry.site) > 0;
         
-        // Site Info
-        ImGui::SetCursorPos(ImVec2(10, 15));
-        ImGui::BeginGroup();
-        // Circular-ish icon placeholder
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 20.0f);
-        ImGui::Button(entry.site.substr(0,1).c_str(), ImVec2(50, 50));
-        ImGui::PopStyleVar();
-        ImGui::SameLine(70);
+        auto action = Components::RenderCredentialCard(entry, i, isRevealed);
         
-        ImGui::BeginGroup();
-        ImGui::Text("%s", entry.site.c_str());
-        ImGui::TextDisabled("%s", entry.username.c_str());
-        ImGui::EndGroup();
-        ImGui::EndGroup();
-
-        // Actions
-        float available_x = ImGui::GetContentRegionAvail().x;
-        ImGui::SameLine(available_x - 190);
-        
-        ImGui::BeginGroup();
-        ImGui::SetCursorPosY(25);
-        if (ImGui::Button("Copy", ImVec2(55, 30))) {
-            ImGui::SetClipboardText(entry.password.c_str());
-            last_copied = "password";
-            copy_feedback_timer = 2.0f;
+        if (action.type == Components::CredentialCardAction::ToggleReveal) {
+            if (isRevealed) {
+                state.revealedSites.erase(entry.site);
+            } else {
+                state.revealedSites.insert(entry.site);
+            }
+        } else if (action.type == Components::CredentialCardAction::Copy) {
+            // 根据 reveal 状态复制密码或显示内容（这里默认复制密码）
+            // 注意：entry.password 是 SecureString，转换为 std::string 传给 clipboard service
+            App::ClipboardService::copyToClipboard(
+                std::string(entry.password.data(), entry.password.size()), 
+                ctx.clipboard, 
+                ImGui::GetTime()
+            );
+            state.lastCopiedLabel = "password";
+            state.copyFeedbackTimer = Tokens::CopyFeedbackDuration;
+        } else if (action.type == Components::CredentialCardAction::Edit) {
+            ctx.session.selectedSiteId = entry.site;
+            ctx.session.isEditMode = true;
+            ctx.currentPage = App::PageId::AddEntry;
+        } else if (action.type == Components::CredentialCardAction::View2FA) {
+            ctx.session.selectedSiteId = entry.site;
+            ctx.currentPage = App::PageId::TwoFactorAuth;
+        } else if (action.type == Components::CredentialCardAction::Delete) {
+            ImGui::OpenPopup(("Delete Confirmation##" + entry.site).c_str());
         }
-        ImGui::SameLine();
-        if (ImGui::Button("2FA", ImVec2(55, 30))) {
-            g_state.selectedCredential = &entry;
-            g_state.currentState = AppState::TwoFactorAuth;
-        }
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-        if (ImGui::Button("Del", ImVec2(55, 30))) {
-            ImGui::OpenPopup("Delete Confirmation");
-        }
-        ImGui::PopStyleColor();
         
-        if (ImGui::BeginPopupModal("Delete Confirmation", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::BeginPopupModal(("Delete Confirmation##" + entry.site).c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Are you sure you want to delete '%s'?", entry.site.c_str());
             ImGui::Spacing();
-            if (ImGui::Button("Yes, Delete", ImVec2(120, 0))) {
-                std::string site_to_del = entry.site;
-                delete_entry(g_state.entries, site_to_del);
-                save_entries(g_state.entries);
-                g_state.selectedCredential = nullptr;
+            if (ImGui::Button("Yes, Delete", ImVec2(120, Tokens::ButtonHeightSmall))) {
+                vault.deleteCredential(entry.site);
+                if (ctx.session.selectedSiteId == entry.site) {
+                    ctx.session.selectedSiteId = std::nullopt;
+                }
                 ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
-                ImGui::EndGroup();
-                ImGui::EndChild();
-                ImGui::PopID();
-                break; // Break the loop because we modified the vector
+                break; // Break loop because entries vector changed
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) { ImGui::CloseCurrentPopup(); }
+            if (ImGui::Button("Cancel", ImVec2(120, Tokens::ButtonHeightSmall))) {
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::EndPopup();
         }
         
-        ImGui::EndGroup();
-
-        ImGui::EndChild();
-        ImGui::PopID();
         ImGui::Spacing();
     }
     ImGui::EndChild(); // ScrollArea
@@ -138,3 +120,5 @@ void RenderDashboardPage()
 
     ImGui::End();
 }
+
+} // namespace PasswordGuard::UI::Pages

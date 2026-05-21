@@ -1,7 +1,7 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <stdexcept>
-namespace TwoFactorAuth {
+namespace PasswordGuard::Core::TOTP {
 
     // ---------------------------------------------------------
     // 核心 TOTP 功能

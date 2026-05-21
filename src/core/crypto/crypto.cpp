@@ -4,6 +4,8 @@
 #include <mutex>
 #include <utility>
 
+namespace PasswordGuard::Core {
+
 namespace {
     // Argon2id/XChaCha20-Poly1305 固定参数，写成常量便于统一管理
     constexpr std::size_t ARGON2_SALT_LEN = crypto_pwhash_SALTBYTES;
@@ -103,9 +105,9 @@ void clear_master_key() {
 }
 
 // 使用主密钥进行认证加密（密文包含魔法头+Salt+Nonce+Ciphertext）
-std::string encrypt(const std::string& plain) {
+SecureString encrypt(const SecureString& plain) {
     std::lock_guard<std::mutex> lock(g_crypto_state_mutex);
-    if (!g_has_master_key || !g_has_db_salt) return "";
+    if (!g_has_master_key || !g_has_db_salt) return SecureString();
 
     std::array<unsigned char, XCHACHA20_NONCE_LEN> nonce{};
     randombytes_buf(nonce.data(), nonce.size());
@@ -121,10 +123,10 @@ std::string encrypt(const std::string& plain) {
         nullptr, nonce.data(), g_master_key.data()) != 0) {
         sodium_memzero(ciphertext.data(), ciphertext.size());
         sodium_memzero(nonce.data(), nonce.size());
-        return "";
+        return SecureString();
     }
 
-    std::string out;
+    SecureString out;
     out.reserve(MAGIC_HEADER.size() + g_db_salt.size() + nonce.size() + ciphertext_len);
     out.append(MAGIC_HEADER);
     out.append(reinterpret_cast<char*>(g_db_salt.data()), g_db_salt.size());
@@ -140,13 +142,13 @@ std::string encrypt(const std::string& plain) {
 // 解析密文并验证完整性，失败时给出明确的错误类型
 DecryptResult decrypt(const std::string& cipher) {
     std::lock_guard<std::mutex> lock(g_crypto_state_mutex);
-    if (!g_has_master_key || !g_has_db_salt) return { DecryptError::WrongPassword, "" };
+    if (!g_has_master_key || !g_has_db_salt) return { DecryptError::WrongPassword, SecureString() };
 
     size_t min_len = MAGIC_HEADER.size() + ARGON2_SALT_LEN + XCHACHA20_NONCE_LEN + XCHACHA20_MAC_LEN;
-    if (cipher.size() < min_len) return { DecryptError::CorruptedFile, "" };
+    if (cipher.size() < min_len) return { DecryptError::CorruptedFile, SecureString() };
 
     if (cipher.compare(0, MAGIC_HEADER.size(), MAGIC_HEADER) != 0) {
-        return { DecryptError::VersionMismatch, "" };
+        return { DecryptError::VersionMismatch, SecureString() };
     }
 
     const unsigned char* salt = reinterpret_cast<const unsigned char*>(cipher.data() + MAGIC_HEADER.size());
@@ -156,7 +158,7 @@ DecryptResult decrypt(const std::string& cipher) {
 
     // 解密前先确保文件中的 Salt 与当前内存中用于派生主密钥的 Salt 一致
     if (sodium_memcmp(salt, g_db_salt.data(), ARGON2_SALT_LEN) != 0) {
-        return { DecryptError::WrongPassword, "" };
+        return { DecryptError::WrongPassword, SecureString() };
     }
 
     std::vector<unsigned char> plain(ciphertext_len - XCHACHA20_MAC_LEN);
@@ -172,19 +174,25 @@ DecryptResult decrypt(const std::string& cipher) {
         if (!plain.empty()) {
             sodium_memzero(plain.data(), plain.size());
         }
-        return { DecryptError::WrongPassword, "" };
+        return { DecryptError::WrongPassword, SecureString() };
     }
 
     if (plain_len > plain.size()) {
         if (!plain.empty()) {
             sodium_memzero(plain.data(), plain.size());
         }
-        return { DecryptError::CorruptedFile, "" };
+        return { DecryptError::CorruptedFile, SecureString() };
     }
 
-    std::string plain_text(reinterpret_cast<char*>(plain.data()), plain_len);
+    SecureString plain_text(reinterpret_cast<char*>(plain.data()), plain_len);
     if (!plain.empty()) {
         sodium_memzero(plain.data(), plain.size());
     }
     return { DecryptError::None, std::move(plain_text) };
 }
+
+bool is_vault_initialized() {
+    return g_has_master_key;
+}
+
+} // namespace PasswordGuard::Core
